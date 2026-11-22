@@ -429,7 +429,7 @@ body.bag-open .bag{transform:none;visibility:visible}
     <div class="lines" id="lines"></div>
     <div class="checkout" id="checkout">
       <h3 id="checkoutTitle" tabindex="-1">Shipping details</h3>
-      <p id="orderInstructions">Enter the delivery address and contact details. Payment via Revolut is next.</p>
+      <p id="orderInstructions">Enter the delivery address and contact details.</p>
       <form class="store-form" id="orderForm">
         <div class="field-pair">
           <label>First name <input name="firstName" autocomplete="shipping given-name" maxlength="80" required></label>
@@ -444,6 +444,7 @@ body.bag-open .bag{transform:none;visibility:visible}
         <label>Apartment, unit or suite (optional) <input name="addressLine2" autocomplete="shipping address-line2" maxlength="120"></label>
         <label>Postal code <input name="postalCode" autocomplete="shipping postal-code" maxlength="24" required></label>
         <label class="check-field"><input type="checkbox" name="noPostalCode"> My address has no postal code</label>
+        <p>Revolut will open in this tab. Pay <strong id="checkoutTotal"></strong> and use your browser’s Back button to return.</p>
         <button type="submit" class="btn-metal">Continue to payment</button>
       </form>
       <p class="form-status" id="orderStatus" role="status"></p>
@@ -677,6 +678,7 @@ function renderBag() {
   }).join("") : `<p class="bag-empty mono">Your bag is empty.</p>`;
   const sub = P.price == null ? null : money(bag.reduce((a, l) => a + l.qty * P.price, 0));
   $("#subtotal").innerHTML = bag.length ? (sub || UNSET("Price not set")) : "—";
+  $("#checkoutTotal").textContent = sub ? sub + " USD" : "—";
   $("#coBtn").disabled = !bag.length;
   $("#paymentResume").hidden = !receipt;
   store.set(bag);
@@ -799,11 +801,17 @@ submitForm(orderForm, orderStatus, "/api/orders", fields => ({
   noPostalCode: fields.noPostalCode === "on",
   items: bag.map(({ sku, sizeId, qty }) => ({ sku, sizeId, qty }))
 }), (order, requestId) => {
+  const submittedTotal = $("#checkoutTotal").textContent;
   saveReceipt({ ...order, requestId });
   bag.length = 0;
   orderForm.elements.postalCode.disabled = false;
   renderBag();
   showPayment(order.paymentStatus);
+  if (order.paymentStatus === "pending" && $("#paymentTotal").textContent === submittedTotal &&
+      document.body.classList.contains("bag-open")) {
+    history.replaceState({ ...history.state, revolutOrder: order.reference }, "");
+    location.assign($("#payLink").href);
+  }
 });
 
 async function updatePayment(order, fields) {
@@ -817,13 +825,23 @@ async function updatePayment(order, fields) {
   showPaymentState(result.paymentStatus);
 }
 
-$("#paymentResume").addEventListener("click", async () => {
+async function checkLatestPayment() {
   showPayment("checking");
   try {
     await updatePayment(receipt);
   } catch {
     showPaymentState("unavailable");
   }
+}
+
+$("#paymentResume").addEventListener("click", checkLatestPayment);
+addEventListener("pageshow", () => {
+  if (!receipt || history.state?.revolutOrder !== receipt.reference) return;
+  const state = { ...history.state };
+  delete state.revolutOrder;
+  history.replaceState(state, "");
+  if (!document.body.classList.contains("bag-open")) openBag();
+  checkLatestPayment();
 });
 
 paymentForm.addEventListener("submit", async event => {

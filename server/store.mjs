@@ -353,7 +353,8 @@ export async function serveStore(request, services) {
     return await handle(request, services);
   } catch (error) {
     if (error instanceof HttpError) return json({ error: error.message }, error.status);
-    console.error('Store request failed:', error.name);
+    const code = typeof error.code === 'string' && /^[A-Z0-9_]+$/.test(error.code) ? error.code : 'UNKNOWN';
+    console.error('Store request failed:', error.name, code);
     return json({ error: 'The store is temporarily unavailable. Please try again.' }, 500);
   }
 }
