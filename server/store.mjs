@@ -1,6 +1,6 @@
 import { adminPage } from './admin-page.mjs';
 
-const product = { sku: 'BRC-CROSS-001', sizeId: '20', unitPrice: 4000, currency: 'USD' };
+const product = { sku: 'BRC-CROSS-001', sizeId: '20', unitPrice: 4000, deliveryFee: 2000, currency: 'USD' };
 const visitorCookie = 'veyrase_vid';
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const orderReference = /^V-[0-9A-F]{12}$/;
@@ -134,7 +134,8 @@ async function newOrder(request, db, data, now) {
     street: field(data.street, 160, 'street address'),
     addressLine2: optionalField(data.addressLine2, 120, 'apartment or suite'),
     region: optionalField(data.region, 100, 'state or province'),
-    postalCode: data.noPostalCode === true ? null : field(data.postalCode, 24, 'postal code')
+    postalCode: data.noPostalCode === true ? null : field(data.postalCode, 24, 'postal code'),
+    deliveryFee: product.deliveryFee
   };
   if (!/^\+?[0-9 ().-]+$/.test(shipping.phone) || !/^\d{6,15}$/.test(shipping.phone.replace(/\D/g, ''))) {
     throw new HttpError(400, 'Enter a phone number with its country code.');
@@ -146,6 +147,10 @@ async function newOrder(request, db, data, now) {
       !Number.isInteger(item.qty) || item.qty < 1 || item.qty > 9) {
     throw new HttpError(400, 'Check your bag and try again.');
   }
+  const subtotal = item.qty * product.unitPrice;
+  if (data.quotedTotal !== subtotal + product.deliveryFee) {
+    throw new HttpError(409, 'Reload checkout to see the current total, including $20 USD delivery.');
+  }
   const tracker = analyticsContext(request, data, now);
   const id = 'V-' + crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase();
   const stored = await db.transaction(async client => {
@@ -155,15 +160,20 @@ async function newOrder(request, db, data, now) {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
       ON CONFLICT (request_id) DO NOTHING`,
       [id, key, tracker.id || null, name, email, product.sku, product.sizeId, item.qty,
-        item.qty * product.unitPrice, product.currency, now, JSON.stringify(shipping)]);
-    const { rows } = await client.query(`SELECT id, subtotal, currency, status, payment_reported_at
+        subtotal, product.currency, now, JSON.stringify(shipping)]);
+    const { rows } = await client.query(`SELECT id, subtotal, currency, status, payment_reported_at, shipping
       FROM veyrase.orders WHERE request_id = $1 AND email = $2`, [key, email]);
     if (!rows[0]) throw new HttpError(409, 'Refresh the page before sending a new order.');
     return rows[0];
   });
   return json({
-    reference: stored.id, subtotal: stored.subtotal, currency: stored.currency, paymentStatus: paymentStatus(stored)
+    reference: stored.id, ...orderAmounts(stored), currency: stored.currency, paymentStatus: paymentStatus(stored)
   }, stored.id === id ? 201 : 200, tracker.cookie);
+}
+
+function orderAmounts(order) {
+  const deliveryFee = order.shipping?.deliveryFee ?? 0;
+  return { subtotal: order.subtotal, deliveryFee, total: order.subtotal + deliveryFee };
 }
 
 function paymentStatus(order) {
@@ -268,7 +278,11 @@ async function listRecords(db, kind, url) {
           ORDER BY o.created_at DESC, o.id LIMIT 51 OFFSET $1`
     : 'SELECT id, order_ref, email, reason, status, created_at FROM veyrase.returns ORDER BY created_at DESC, id LIMIT 51 OFFSET $1';
   const { rows } = await db.query(sql, [offset]);
-  return json({ rows: rows.slice(0, 50), more: rows.length > 50 });
+  const page = rows.slice(0, 50);
+  return json({
+    rows: kind === 'orders' ? page.map(order => ({ ...order, ...orderAmounts(order) })) : page,
+    more: rows.length > 50
+  });
 }
 
 async function changeStatus(db, kind, id, data, now) {

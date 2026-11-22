@@ -74,8 +74,8 @@ function paintStatistics(data) {
   empty(tbody, 6, 'За этот период данных пока нет.');
 }
 
-function orderTotal(record) {
-  return new Intl.NumberFormat('ru', { style: 'currency', currency: record.currency }).format(record.subtotal / 100);
+function orderTotal(record, amount = record.total ?? record.subtotal) {
+  return new Intl.NumberFormat('ru', { style: 'currency', currency: record.currency }).format(amount / 100);
 }
 
 function shippingCell(row, shipping) {
@@ -154,7 +154,7 @@ function paintRecords(kind, data) {
       if (item.shipping?.phone) contact.append(make('small', item.shipping.phone));
       shippingCell(row, item.shipping);
       cell(row, item.qty + ' × ' + item.size_id + ' cm');
-      cell(row, orderTotal(item));
+      cell(row, orderTotal(item), item.deliveryFee ? 'Доставка ' + orderTotal(item, item.deliveryFee) : null);
       cell(row, sourceName(item.source));
     } else {
       cell(row, item.order_ref);

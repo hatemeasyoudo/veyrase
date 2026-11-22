@@ -444,13 +444,18 @@ body.bag-open .bag{transform:none;visibility:visible}
         <label>Apartment, unit or suite (optional) <input name="addressLine2" autocomplete="shipping address-line2" maxlength="120"></label>
         <label>Postal code <input name="postalCode" autocomplete="shipping postal-code" maxlength="24" required></label>
         <label class="check-field"><input type="checkbox" name="noPostalCode"> My address has no postal code</label>
-        <p>Revolut will open in this tab. Pay <strong id="checkoutTotal"></strong> and use your browser’s Back button to return.</p>
+        <div class="payment-summary">
+          <p><span>Delivery</span><strong id="checkoutDelivery"></strong></p>
+          <p><span>Total to pay</span><strong id="checkoutTotal"></strong></p>
+        </div>
+        <p>Revolut will open in this tab. Use your browser’s Back button to return after paying.</p>
         <button type="submit" class="btn-metal">Continue to payment</button>
       </form>
       <p class="form-status" id="orderStatus" role="status"></p>
       <section id="paymentDetails" aria-label="Revolut payment" hidden>
         <div class="payment-summary">
           <p><span>Order number</span><strong id="paymentReference"></strong></p>
+          <p id="paymentDeliveryRow" hidden><span>Delivery</span><strong id="paymentDelivery"></strong></p>
           <p><span>Total to pay</span><strong id="paymentTotal"></strong></p>
         </div>
         <div id="paymentPending" hidden>
@@ -469,6 +474,8 @@ body.bag-open .bag{transform:none;visibility:visible}
   </div>
   <div class="bag-foot">
     <div class="sum mono"><span>Subtotal</span><span class="val" id="subtotal">—</span></div>
+    <div class="sum mono" id="bagDeliveryRow" hidden><span>Delivery</span><span class="val" id="bagDelivery">—</span></div>
+    <div class="sum mono" id="bagTotalRow" hidden><span>Total</span><span class="val" id="bagTotal">—</span></div>
     <button type="button" class="btn-metal" id="coBtn"><span>Checkout</span><svg viewBox="0 0 34 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M0 6H32M27 1L33 6L27 11"/></svg></button>
     <button type="button" class="btn-line" id="paymentResume" hidden>View latest order</button>
   </div>
@@ -482,6 +489,7 @@ const SITE_CONFIG = {
     sku: "BRC-CROSS-001",
     name: "Tennis bracelet / cross",           // working product title
     price: 4000,                                // minor units → $40.00
+    deliveryFee: 2000,                          // USD per order
     currency: "USD",
     sizes: [{ id: "20", label: "20 CM", note: "±2 CM" }],   // one size, adjustable ±2 cm at the bracelet fastening
     availability: null,                         // e.g. "In stock"
@@ -500,7 +508,7 @@ const SITE_CONFIG = {
     crossLabel: "≈ 30 × 17 mm",
     info: {
       sizeGuide: "One size: 20 cm. Length adjusts by ±2 cm at the bracelet fastening.",
-      delivery: "Worldwide. 7–10 days.",
+      delivery: "Worldwide. 7–10 days. $20 USD per order.",
       returns: "Complete and submit a return request. We’ll review it and let you know whether your return is approved. You are responsible for return shipping costs.",
       care: null
     }
@@ -662,6 +670,8 @@ const store = { get() {
 const bag = store.get().filter(l => l?.sku === P.sku && Number.isInteger(l.qty) && l.qty >= 1 && l.qty <= 9 && SIZES.some(s => s.id === l.sizeId));
 const bagEl = $("#bag"), scrim = $("#scrim"), bagBtn = $("#bagBtn");
 const say = t => { const a = $("#announce"); a.textContent = ""; setTimeout(() => a.textContent = t, 30); };
+const bagSubtotal = () => bag.reduce((sum, line) => sum + line.qty * P.price, 0);
+const inDollars = amount => money(amount) + " USD";
 function renderBag() {
   const n = bag.reduce((a, l) => a + l.qty, 0);
   $("#bagCount").textContent = $("#bagCount2").textContent = n;
@@ -676,9 +686,15 @@ function renderBag() {
           <button type="button" data-a="inc" data-i="${i}" aria-label="Increase quantity">+</button></div>
           <button type="button" class="rm" data-a="rm" data-i="${i}">Remove</button></div></div></div>`;
   }).join("") : `<p class="bag-empty mono">Your bag is empty.</p>`;
-  const sub = P.price == null ? null : money(bag.reduce((a, l) => a + l.qty * P.price, 0));
+  const amount = bagSubtotal();
+  const sub = P.price == null ? null : money(amount);
   $("#subtotal").innerHTML = bag.length ? (sub || UNSET("Price not set")) : "—";
-  $("#checkoutTotal").textContent = sub ? sub + " USD" : "—";
+  $("#bagDeliveryRow").hidden = !bag.length;
+  $("#bagTotalRow").hidden = !bag.length;
+  $("#bagDelivery").textContent = money(P.deliveryFee);
+  $("#bagTotal").textContent = sub ? money(amount + P.deliveryFee) : "—";
+  $("#checkoutDelivery").textContent = inDollars(P.deliveryFee);
+  $("#checkoutTotal").textContent = sub ? inDollars(amount + P.deliveryFee) : "—";
   $("#coBtn").disabled = !bag.length;
   $("#paymentResume").hidden = !receipt;
   store.set(bag);
@@ -773,7 +789,9 @@ function showPayment(state) {
   orderStatus.textContent = "";
   paymentDetails.hidden = false;
   $("#paymentReference").textContent = receipt.reference;
-  $("#paymentTotal").textContent = money(receipt.subtotal) + " USD";
+  $("#paymentDeliveryRow").hidden = !receipt.deliveryFee;
+  $("#paymentDelivery").textContent = receipt.deliveryFee ? inDollars(receipt.deliveryFee) : "";
+  $("#paymentTotal").textContent = inDollars(receipt.total ?? receipt.subtotal);
   paymentForm.reset();
   showPaymentState(state);
   bagEl.classList.add("co");
@@ -799,8 +817,10 @@ submitForm(orderForm, orderStatus, "/api/orders", fields => ({
   ...attribution,
   ...fields,
   noPostalCode: fields.noPostalCode === "on",
+  quotedTotal: bagSubtotal() + P.deliveryFee,
   items: bag.map(({ sku, sizeId, qty }) => ({ sku, sizeId, qty }))
 }), (order, requestId) => {
+  if (!Number.isSafeInteger(order.total)) throw new Error("Reload checkout to see the current total.");
   const submittedTotal = $("#checkoutTotal").textContent;
   saveReceipt({ ...order, requestId });
   bag.length = 0;
