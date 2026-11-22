@@ -195,6 +195,9 @@ legend{padding:0;display:flex;justify-content:space-between;width:100%;color:var
 .store-form label{display:grid;gap:4px;color:var(--fg2);font:400 .875rem/1.45 var(--sans)}
 .store-form input,.store-form textarea{width:100%;min-width:0;padding:9px 10px;background:#101010;border:1px solid #56565a;color:var(--fg);border-radius:0;font:inherit;font-size:1rem}
 .store-form textarea{resize:vertical}
+.store-form .field-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.store-form .check-field{display:flex;align-items:center;gap:8px}
+.store-form .check-field input{width:auto;margin:0;accent-color:#bbb}
 .form-status{margin:0;color:var(--fg2);font:400 .875rem/1.45 var(--sans)}
 .form-status:empty{display:none}
 
@@ -229,6 +232,11 @@ body.bag-open .bag{transform:none;visibility:visible}
 .bag.co .lines,.bag.co .bag-foot{display:none}
 .checkout h3{margin:0 0 6px;font-family:var(--display);font-weight:400;font-size:30px;text-transform:uppercase;line-height:1}
 .checkout p{color:var(--fg2);font-size:13px;margin:8px 0}
+.checkout [hidden],.bag-foot [hidden]{display:none}
+.checkout .btn-metal{text-decoration:none}
+.payment-summary{padding:10px 0;border-block:1px solid var(--line)}
+.payment-summary p{display:flex;justify-content:space-between;gap:10px}
+.payment-summary strong{color:var(--fg)}
 
 /* ── responsive ────────────────────── */
 @media (max-width:1180px){
@@ -420,21 +428,48 @@ body.bag-open .bag{transform:none;visibility:visible}
   <div class="bag-body">
     <div class="lines" id="lines"></div>
     <div class="checkout" id="checkout">
-      <h3>Request an order</h3>
-      <p id="orderInstructions">We’ll contact you by email to confirm shipping and payment.</p>
+      <h3 id="checkoutTitle" tabindex="-1">Shipping details</h3>
+      <p id="orderInstructions">Enter the delivery address and contact details. Payment via Revolut is next.</p>
       <form class="store-form" id="orderForm">
-        <label>Name <input name="name" autocomplete="name" maxlength="100" required></label>
+        <div class="field-pair">
+          <label>First name <input name="firstName" autocomplete="shipping given-name" maxlength="80" required></label>
+          <label>Last name <input name="lastName" autocomplete="shipping family-name" maxlength="80" required></label>
+        </div>
         <label>Email <input name="email" type="email" autocomplete="email" maxlength="254" required></label>
-        <button type="submit" class="btn-metal">Send order request</button>
+        <label>Phone with country code <input name="phone" type="tel" autocomplete="shipping tel" maxlength="35" required></label>
+        <label>Country <input name="country" autocomplete="shipping country-name" maxlength="100" required></label>
+        <label>City <input name="city" autocomplete="shipping address-level2" maxlength="100" required></label>
+        <label>State / region (if applicable) <input name="region" autocomplete="shipping address-level1" maxlength="100"></label>
+        <label>Street and house number <input name="street" autocomplete="shipping address-line1" maxlength="160" required></label>
+        <label>Apartment, unit or suite (optional) <input name="addressLine2" autocomplete="shipping address-line2" maxlength="120"></label>
+        <label>Postal code <input name="postalCode" autocomplete="shipping postal-code" maxlength="24" required></label>
+        <label class="check-field"><input type="checkbox" name="noPostalCode"> My address has no postal code</label>
+        <button type="submit" class="btn-metal">Continue to payment</button>
       </form>
       <p class="form-status" id="orderStatus" role="status"></p>
+      <section id="paymentDetails" aria-label="Revolut payment" hidden>
+        <div class="payment-summary">
+          <p><span>Order number</span><strong id="paymentReference"></strong></p>
+          <p><span>Total to pay</span><strong id="paymentTotal"></strong></p>
+        </div>
+        <div id="paymentPending" hidden>
+          <p>Enter the total in USD. If Revolut offers a payment note, enter your order number. Then return here to tell us you paid.</p>
+          <a class="btn-metal" id="payLink" href="https://revolut.me/kosex" target="_blank" rel="noopener noreferrer">Pay with Revolut</a>
+          <form class="store-form" id="paymentForm">
+            <label>Name shown on the transfer <input name="payerName" maxlength="120" required></label>
+            <label>Revolut transfer ID (if available) <input name="payerReference" maxlength="160"></label>
+            <button type="submit" class="btn-line">I sent the payment</button>
+          </form>
+        </div>
+        <p class="form-status" id="paymentStatus" role="status"></p>
+      </section>
       <button type="button" class="btn-line" id="coBack" style="margin-top:18px">Back to bag</button>
     </div>
   </div>
   <div class="bag-foot">
     <div class="sum mono"><span>Subtotal</span><span class="val" id="subtotal">—</span></div>
-    <p class="mono" style="margin:0;color:#6c6f74;font-size:10px;letter-spacing:.1em" id="sumNote"></p>
-    <button type="button" class="btn-metal" id="coBtn"><span>Request an order</span><svg viewBox="0 0 34 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M0 6H32M27 1L33 6L27 11"/></svg></button>
+    <button type="button" class="btn-metal" id="coBtn"><span>Checkout</span><svg viewBox="0 0 34 12" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M0 6H32M27 1L33 6L27 11"/></svg></button>
+    <button type="button" class="btn-line" id="paymentResume" hidden>View latest order</button>
   </div>
 </aside>
 <div class="sr" aria-live="polite" id="announce"></div>
@@ -548,24 +583,26 @@ function submitForm(form, status, path, collect, done) {
     event.preventDefault();
     if (button.disabled) return;
     button.disabled = true;
+    form.setAttribute("aria-busy", "true");
     status.textContent = "Sending…";
     const fields = Object.fromEntries(new FormData(form));
     try {
-      requestKey ||= crypto.randomUUID();
+      const submittedKey = requestKey ||= crypto.randomUUID();
       const payload = collect(fields);
-      const result = await send(path, { ...payload, requestId: requestKey });
+      const result = await send(path, { ...payload, requestId: submittedKey });
       if (typeof result.reference !== "string") throw new Error("The request could not be confirmed. Please try again.");
       requestKey = undefined;
       form.reset();
-      done(result.reference);
+      done(result, submittedKey);
     } catch (error) {
       status.textContent = error.message || "Could not send. Please try again.";
     } finally {
       button.disabled = false;
+      form.removeAttribute("aria-busy");
     }
   });
 }
-submitForm($("#returnForm"), $("#returnStatus"), "/api/returns", fields => fields, reference => {
+submitForm($("#returnForm"), $("#returnStatus"), "/api/returns", fields => fields, ({ reference }) => {
   $("#returnStatus").textContent = `Request received. Your reference is ${reference}.`;
 });
 
@@ -640,11 +677,12 @@ function renderBag() {
   }).join("") : `<p class="bag-empty mono">Your bag is empty.</p>`;
   const sub = P.price == null ? null : money(bag.reduce((a, l) => a + l.qty * P.price, 0));
   $("#subtotal").innerHTML = bag.length ? (sub || UNSET("Price not set")) : "—";
-  $("#sumNote").textContent = "Shipping and payment details are confirmed by email.";
   $("#coBtn").disabled = !bag.length;
+  $("#paymentResume").hidden = !receipt;
   store.set(bag);
 }
 $("#lines").addEventListener("click", e => {
+  if (orderForm.hasAttribute("aria-busy")) return;
   const b = e.target.closest("button[data-a]"); if (!b) return;
   const i = +b.dataset.i, a = b.dataset.a;
   if (a === "inc") bag[i].qty = Math.min(bag[i].qty + 1, 9);
@@ -674,7 +712,7 @@ document.addEventListener("keydown", e => {
   if (!document.body.classList.contains("bag-open")) return;
   if (e.key === "Escape") { e.preventDefault(); closeBag(); return; }
   if (e.key === "Tab") {
-    const f = $$('button:not([disabled]),[href],input,[tabindex]:not([tabindex="-1"])', bagEl).filter(el => el.offsetParent !== null);
+    const f = $$('button:not([disabled]),[href],input:not([disabled]),[tabindex]:not([tabindex="-1"])', bagEl).filter(el => el.offsetParent !== null);
     if (!f.length) return;
     const first = f[0], last = f[f.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -683,6 +721,7 @@ document.addEventListener("keydown", e => {
 });
 $("#buyForm").addEventListener("submit", e => {
   e.preventDefault();
+  if (orderForm.hasAttribute("aria-busy")) return;
   const sel = $('input[name="size"]:checked');
   if (!SIZES.length) { $("#sizeErr").textContent = "No sizes configured"; return; }
   if (!sel) { $("#sizeErr").textContent = "Select a size"; $('input[name="size"]').focus(); return; }
@@ -696,10 +735,60 @@ $("#sizes").addEventListener("change", () => $("#sizeErr").textContent = "");
 
 const orderForm = $("#orderForm");
 const orderStatus = $("#orderStatus");
+const orderInstructions = $("#orderInstructions");
+const checkoutTitle = $("#checkoutTitle");
+const paymentDetails = $("#paymentDetails");
+const paymentForm = $("#paymentForm");
+const paymentMessage = $("#paymentStatus");
+const receiptKey = "veyrase-last-order.v1";
+let receipt;
+try {
+  const saved = JSON.parse(localStorage.getItem(receiptKey));
+  if (/^V-[0-9A-F]{12}$/.test(saved?.reference) && typeof saved.requestId === "string" &&
+      saved.currency === "USD" && Number.isSafeInteger(saved.subtotal) && saved.subtotal > 0) receipt = saved;
+} catch {}
+
+function saveReceipt(order) {
+  receipt = order;
+  try { localStorage.setItem(receiptKey, JSON.stringify(order)); } catch {}
+}
+
+function showPaymentState(state) {
+  $("#paymentPending").hidden = state !== "pending";
+  paymentMessage.textContent = ({
+    checking: "Checking payment status…",
+    reported: "Payment details received. We’ll check the transfer before preparing your order.",
+    paid: "Payment confirmed.",
+    cancelled: "This order was cancelled.",
+    unavailable: "Could not check this order. Go back and try again."
+  })[state] || "";
+}
+
+function showPayment(state) {
+  checkoutTitle.textContent = "Revolut payment";
+  orderForm.hidden = true;
+  orderInstructions.hidden = true;
+  orderStatus.textContent = "";
+  paymentDetails.hidden = false;
+  $("#paymentReference").textContent = receipt.reference;
+  $("#paymentTotal").textContent = money(receipt.subtotal) + " USD";
+  paymentForm.reset();
+  showPaymentState(state);
+  bagEl.classList.add("co");
+  if (document.body.classList.contains("bag-open")) {
+    (state === "pending" ? $("#payLink") : checkoutTitle).focus();
+  }
+}
+
+orderForm.elements.noPostalCode.addEventListener("change", event => {
+  orderForm.elements.postalCode.disabled = event.target.checked;
+});
 $("#coBtn").addEventListener("click", () => {
   if (!bag.length) return;
+  checkoutTitle.textContent = "Shipping details";
+  paymentDetails.hidden = true;
   orderForm.hidden = false;
-  $("#orderInstructions").hidden = false;
+  orderInstructions.hidden = false;
   orderStatus.textContent = "";
   bagEl.classList.add("co");
   orderForm.querySelector("input").focus();
@@ -707,18 +796,56 @@ $("#coBtn").addEventListener("click", () => {
 submitForm(orderForm, orderStatus, "/api/orders", fields => ({
   ...attribution,
   ...fields,
+  noPostalCode: fields.noPostalCode === "on",
   items: bag.map(({ sku, sizeId, qty }) => ({ sku, sizeId, qty }))
-}), reference => {
+}), (order, requestId) => {
+  saveReceipt({ ...order, requestId });
   bag.length = 0;
+  orderForm.elements.postalCode.disabled = false;
   renderBag();
-  orderForm.hidden = true;
-  $("#orderInstructions").hidden = true;
-  orderStatus.textContent = `Order request received. Your order number is ${reference}. We’ll be in touch by email.`;
-  $("#coBack").focus();
+  showPayment(order.paymentStatus);
+});
+
+async function updatePayment(order, fields) {
+  const result = await send("/api/orders/payment", {
+    reference: order.reference,
+    requestId: order.requestId,
+    ...fields
+  });
+  if (result.reference !== receipt?.reference) return;
+  saveReceipt({ ...receipt, paymentStatus: result.paymentStatus });
+  showPaymentState(result.paymentStatus);
+}
+
+$("#paymentResume").addEventListener("click", async () => {
+  showPayment("checking");
+  try {
+    await updatePayment(receipt);
+  } catch {
+    showPaymentState("unavailable");
+  }
+});
+
+paymentForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = paymentForm.querySelector('button[type="submit"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  paymentMessage.textContent = "Sending…";
+  try {
+    await updatePayment(receipt, Object.fromEntries(new FormData(paymentForm)));
+    if (!paymentDetails.hidden && bagEl.classList.contains("co")) checkoutTitle.focus();
+  } catch (error) {
+    paymentMessage.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 $("#coBack").addEventListener("click", () => {
+  if (orderForm.hasAttribute("aria-busy")) return;
   bagEl.classList.remove("co");
-  ($("#coBtn").disabled ? $("#bagClose") : $("#coBtn")).focus();
+  const next = $("#coBtn").disabled ? (receipt ? $("#paymentResume") : $("#bagClose")) : $("#coBtn");
+  next.focus();
 });
 renderBag();
 

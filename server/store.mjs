@@ -3,6 +3,7 @@ import { adminPage } from './admin-page.mjs';
 const product = { sku: 'BRC-CROSS-001', sizeId: '20', unitPrice: 4000, currency: 'USD' };
 const visitorCookie = 'veyrase_vid';
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
+const orderReference = /^V-[0-9A-F]{12}$/;
 const encoder = new TextEncoder();
 const privateHeaders = {
   'Cache-Control': 'no-store, private',
@@ -31,6 +32,10 @@ function field(value, max, label) {
   const clean = clearText(value, max + 1);
   if (!clean || clean.length > max) throw new HttpError(400, 'Enter a valid ' + label + '.');
   return clean;
+}
+
+function optionalField(value, max, label) {
+  return value == null || (typeof value === 'string' && !value.trim()) ? null : field(value, max, label);
 }
 
 function emailAddress(input) {
@@ -120,7 +125,21 @@ async function visit(request, db, data, now) {
 
 async function newOrder(request, db, data, now) {
   const key = requestId(data.requestId);
-  const name = field(data.name, 100, 'name');
+  const shipping = {
+    firstName: field(data.firstName, 80, 'first name'),
+    lastName: field(data.lastName, 80, 'last name'),
+    phone: field(data.phone, 35, 'phone number'),
+    country: field(data.country, 100, 'country'),
+    city: field(data.city, 100, 'city'),
+    street: field(data.street, 160, 'street address'),
+    addressLine2: optionalField(data.addressLine2, 120, 'apartment or suite'),
+    region: optionalField(data.region, 100, 'state or province'),
+    postalCode: data.noPostalCode === true ? null : field(data.postalCode, 24, 'postal code')
+  };
+  if (!/^\+?[0-9 ().-]+$/.test(shipping.phone) || !/^\d{6,15}$/.test(shipping.phone.replace(/\D/g, ''))) {
+    throw new HttpError(400, 'Enter a phone number with its country code.');
+  }
+  const name = shipping.firstName + ' ' + shipping.lastName;
   const email = emailAddress(data.email);
   const item = Array.isArray(data.items) && data.items.length === 1 ? data.items[0] : null;
   if (!item || item.sku !== product.sku || item.sizeId !== product.sizeId ||
@@ -132,16 +151,44 @@ async function newOrder(request, db, data, now) {
   const stored = await db.transaction(async client => {
     await recordTraffic(client, tracker, now, true);
     await client.query(`INSERT INTO veyrase.orders
-      (id, request_id, visitor_id, name, email, sku, size_id, qty, subtotal, currency, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      (id, request_id, visitor_id, name, email, sku, size_id, qty, subtotal, currency, created_at, shipping)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)
       ON CONFLICT (request_id) DO NOTHING`,
       [id, key, tracker.id || null, name, email, product.sku, product.sizeId, item.qty,
-        item.qty * product.unitPrice, product.currency, now]);
-    const { rows } = await client.query('SELECT id FROM veyrase.orders WHERE request_id = $1 AND email = $2', [key, email]);
+        item.qty * product.unitPrice, product.currency, now, JSON.stringify(shipping)]);
+    const { rows } = await client.query(`SELECT id, subtotal, currency, status, payment_reported_at
+      FROM veyrase.orders WHERE request_id = $1 AND email = $2`, [key, email]);
     if (!rows[0]) throw new HttpError(409, 'Refresh the page before sending a new order.');
     return rows[0];
   });
-  return json({ reference: stored.id }, stored.id === id ? 201 : 200, tracker.cookie);
+  return json({
+    reference: stored.id, subtotal: stored.subtotal, currency: stored.currency, paymentStatus: paymentStatus(stored)
+  }, stored.id === id ? 201 : 200, tracker.cookie);
+}
+
+function paymentStatus(order) {
+  if (order.status === 'paid' || order.status === 'shipped') return 'paid';
+  if (order.status === 'cancelled') return 'cancelled';
+  return order.payment_reported_at ? 'reported' : 'pending';
+}
+
+async function orderPayment(db, data, now) {
+  const key = requestId(data.requestId);
+  if (typeof data.reference !== 'string' || !orderReference.test(data.reference)) {
+    throw new HttpError(400, 'Enter a valid order number.');
+  }
+  const order = await db.transaction(async client => {
+    const { rows: [stored] } = await client.query(`SELECT id, status, payment_reported_at
+      FROM veyrase.orders WHERE id = $1 AND request_id = $2 AND shipping IS NOT NULL FOR UPDATE`, [data.reference, key]);
+    if (!stored) throw new HttpError(404, 'Order not found.');
+    if (data.payerName == null || paymentStatus(stored) !== 'pending') return stored;
+    const payerName = field(data.payerName, 120, 'payer name');
+    const payerReference = optionalField(data.payerReference, 160, 'payment reference');
+    await client.query(`UPDATE veyrase.orders SET payment_reported_at = $1, payment_payer = $2, payment_payer_reference = $3
+      WHERE id = $4`, [now, payerName, payerReference, stored.id]);
+    return { ...stored, payment_reported_at: now };
+  });
+  return json({ reference: order.id, paymentStatus: paymentStatus(order) });
 }
 
 async function newReturn(db, data, now) {
@@ -216,6 +263,7 @@ async function listRecords(db, kind, url) {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new HttpError(400, 'Invalid page.');
   const sql = kind === 'orders'
     ? `SELECT o.id, o.name, o.email, o.size_id, o.qty, o.subtotal, o.currency, o.status, o.created_at, o.paid_at,
+          o.shipping, o.payment_reported_at, o.payment_payer, o.payment_payer_reference, o.payment_transaction_id,
           v.source FROM veyrase.orders o LEFT JOIN veyrase.visitors v ON v.id = o.visitor_id
           ORDER BY o.created_at DESC, o.id LIMIT 51 OFFSET $1`
     : 'SELECT id, order_ref, email, reason, status, created_at FROM veyrase.returns ORDER BY created_at DESC, id LIMIT 51 OFFSET $1';
@@ -228,15 +276,26 @@ async function changeStatus(db, kind, id, data, now) {
   const desired = data.status;
   const table = isOrder ? 'veyrase.orders' : 'veyrase.returns';
   const transitions = isOrder ? orderTransitions : returnTransitions;
-  const { rows: [current] } = await db.query(`SELECT status FROM ${table} WHERE id = $1`, [id]);
+  const { rows: [current] } = await db.query(`SELECT status${isOrder ? ', shipping' : ''} FROM ${table} WHERE id = $1`, [id]);
   if (!current) throw new HttpError(404, 'Record not found.');
   if (desired === current.status) return json({ ok: true });
   if (!transitions[current.status]?.includes(desired)) throw new HttpError(409, 'This status change is unavailable.');
-  const result = isOrder
-    ? await db.query(`UPDATE veyrase.orders
-        SET status = $1, paid_at = CASE WHEN $1 = 'paid' THEN $2::timestamptz ELSE paid_at END
-        WHERE id = $3 AND status = $4`, [desired, now, id, current.status])
-    : await db.query('UPDATE veyrase.returns SET status = $1 WHERE id = $2 AND status = $3', [desired, id, current.status]);
+  const transactionId = isOrder && desired === 'paid' && current.shipping
+    ? field(data.transactionId, 160, 'Revolut transaction ID') : null;
+  let result;
+  try {
+    result = isOrder
+      ? await db.query(`UPDATE veyrase.orders
+          SET status = $1, paid_at = CASE WHEN $1 = 'paid' THEN $2::timestamptz ELSE paid_at END,
+            payment_transaction_id = COALESCE($5, payment_transaction_id)
+          WHERE id = $3 AND status = $4`, [desired, now, id, current.status, transactionId])
+      : await db.query('UPDATE veyrase.returns SET status = $1 WHERE id = $2 AND status = $3', [desired, id, current.status]);
+  } catch (error) {
+    if (error.code === '23505' && error.constraint === 'orders_payment_transaction') {
+      throw new HttpError(409, 'This Revolut transaction is already linked to another order.');
+    }
+    throw error;
+  }
   if (result.rowCount !== 1) throw new HttpError(409, 'Record changed. Reload and try again.');
   return json({ ok: true });
 }
@@ -278,11 +337,12 @@ async function handle(request, { database, adminPassword }) {
     sameOrigin(request, url);
     return changeStatus(db, records[1], records[2], await readJson(request), now);
   }
-  if (method === 'POST' && ['/api/analytics', '/api/orders', '/api/returns'].includes(path)) {
+  if (method === 'POST' && ['/api/analytics', '/api/orders', '/api/orders/payment', '/api/returns'].includes(path)) {
     sameOrigin(request, url);
     const body = await readJson(request);
     if (path === '/api/analytics') return visit(request, db, body, now);
     if (path === '/api/orders') return newOrder(request, db, body, now);
+    if (path === '/api/orders/payment') return orderPayment(db, body, now);
     return newReturn(db, body, now);
   }
   throw new HttpError(404, 'Page not found.');

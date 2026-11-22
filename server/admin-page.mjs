@@ -39,7 +39,7 @@ export const adminPage = `<!doctype html>
     <section id="orders" hidden>
       <h2>Заказы</h2>
       <div class="scroll" tabindex="0" aria-label="Таблица заказов"><table>
-        <thead><tr><th>Заказ</th><th>Клиент</th><th>Товар</th><th>Сумма</th><th>Источник</th><th>Статус</th></tr></thead>
+        <thead><tr><th>Заказ</th><th>Клиент</th><th>Доставка</th><th>Товар</th><th>Сумма</th><th>Источник</th><th>Статус и оплата</th></tr></thead>
         <tbody id="order-rows"></tbody>
       </table></div>
       <div class="pager"><button type="button" data-page="-1">Назад</button><button type="button" data-page="1">Далее</button></div>

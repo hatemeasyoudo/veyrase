@@ -28,5 +28,8 @@ th{color:var(--muted);font-weight:600;background:#19191a;white-space:nowrap}
 tr:last-child td{border-bottom:0}
 td small{display:block;color:var(--muted);margin-top:3px}
 td select{display:block;margin-top:6px;width:max-content;max-width:100%;font-size:.9rem}
+.shipping{min-width:145px;overflow-wrap:anywhere}
+.shipping summary{cursor:pointer}
+.payment{min-width:170px;overflow-wrap:anywhere}
 .reason{min-width:190px;white-space:pre-wrap;overflow-wrap:anywhere}
 .pager{display:flex;gap:8px;margin-top:12px}
