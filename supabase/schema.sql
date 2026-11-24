@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS veyrase.visitors (
   source text NOT NULL,
   medium text NOT NULL DEFAULT '',
   campaign text NOT NULL DEFAULT '',
+  country text,
   created_at timestamptz NOT NULL
 );
 

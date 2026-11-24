@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tennis Bracelet / Cross</title>
+<title>veyrase.store</title>
 <meta name="description" content="Single-object jewellery page. Tennis bracelet with cross pendant.">
 <meta name="theme-color" content="#000000">
 <link rel="preload" href="assets/hero.webp" as="image" type="image/webp">
@@ -302,10 +302,9 @@ body.bag-open .bag{transform:none;visibility:visible}
 <a class="skip" href="#details">Skip to product</a>
 
 <header class="site-head" id="top">
-  <a class="mark" href="#object" aria-label="Temporary brand mark — back to the object">
+  <a class="mark" href="#object" aria-label="Veyrase — back to the object">
     <svg viewBox="0 0 26 34" aria-hidden="true"><defs><linearGradient id="mk" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset=".45" stop-color="#9a9ea4"/><stop offset=".55" stop-color="#e8eaec"/><stop offset="1" stop-color="#6d7075"/></linearGradient></defs>
       <path fill="url(#mk)" d="M13 0C13.5 10.2 14.6 15.6 26 17C14.6 18.4 13.5 23.8 13 34C12.5 23.8 11.4 18.4 0 17C11.4 15.6 12.5 10.2 13 0Z"/></svg>
-    <span class="mono" data-cfg="brandLabel">Mark — temporary</span>
   </a>
   <nav class="nav" aria-label="Page">
     <a href="#object">Object</a>
@@ -411,7 +410,7 @@ body.bag-open .bag{transform:none;visibility:visible}
 </main>
 
 <footer class="site-foot mono">
-  <a class="mark" href="#object" aria-label="Back to top"><svg viewBox="0 0 26 34" aria-hidden="true"><path fill="#9a9ea4" d="M13 0C13.5 10.2 14.6 15.6 26 17C14.6 18.4 13.5 23.8 13 34C12.5 23.8 11.4 18.4 0 17C11.4 15.6 12.5 10.2 13 0Z"/></svg><span data-cfg="brandFoot">Name pending</span></a>
+  <a class="mark" href="#object" aria-label="Back to top"><svg viewBox="0 0 26 34" aria-hidden="true"><path fill="#9a9ea4" d="M13 0C13.5 10.2 14.6 15.6 26 17C14.6 18.4 13.5 23.8 13 34C12.5 23.8 11.4 18.4 0 17C11.4 15.6 12.5 10.2 13 0Z"/></svg><span data-cfg="brandFoot">VEYRASE</span></a>
   <nav class="social-links" aria-label="Social media">
     <a href="https://www.instagram.com/veyrase.store/" target="_blank" rel="noopener noreferrer">Instagram</a>
     <a href="https://www.tiktok.com/@veyrase" target="_blank" rel="noopener noreferrer">TikTok</a>
@@ -484,7 +483,7 @@ body.bag-open .bag{transform:none;visibility:visible}
 
 <script>
 const SITE_CONFIG = {
-  brand: { name: null },                       // brand name not approved yet → temporary four-point mark
+  brand: { name: "VEYRASE" },
   product: {
     sku: "BRC-CROSS-001",
     name: "Tennis bracelet / cross",           // working product title
@@ -531,7 +530,7 @@ const money = minor => (P.price == null || !P.currency) ? null :
 
 $$("[data-cfg]").forEach(el => {
   const k = el.dataset.cfg;
-  const map = { brandLabel: C.brand.name || "Mark — temporary", brandFoot: C.brand.name || "Name pending — temporary mark",
+  const map = { brandLabel: C.brand.name || "VEYRASE", brandFoot: C.brand.name || "VEYRASE",
     productShort: P.name, productName: P.name, sku: P.sku, stone: P.stoneLabel, cross: P.crossLabel };
   if (k in map) el.textContent = map[k];
 });

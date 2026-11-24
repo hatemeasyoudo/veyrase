@@ -33,3 +33,5 @@ td select{display:block;margin-top:6px;width:max-content;max-width:100%;font-siz
 .payment{min-width:170px;overflow-wrap:anywhere}
 .reason{min-width:190px;white-space:pre-wrap;overflow-wrap:anywhere}
 .pager{display:flex;gap:8px;margin-top:12px}
+
+.report-title{margin-top:32px}

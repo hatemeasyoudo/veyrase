@@ -61,6 +61,26 @@ function paintStatistics(data) {
     purchaseRate: visitors ? percent.format(purchasers / visitors) + ' от посетителей' : ''
   };
   for (const [key, value] of Object.entries(values)) $('[data-metric="' + key + '"]').textContent = value;
+  const daily = $('#daily-rows');
+  daily.replaceChildren();
+  for (const item of data.daily || []) {
+    const row = make('tr');
+    cell(row, item.day.split('-').reverse().join('.'));
+    for (const key of ['visitors', 'cart', 'orders', 'paid_orders']) cell(row, number.format(item[key]));
+    daily.append(row);
+  }
+  empty(daily, 5, 'За этот период данных пока нет.');
+  const countries = $('#country-rows');
+  countries.replaceChildren();
+  const names = new Intl.DisplayNames(['ru'], { type: 'region' });
+  for (const item of data.countries || []) {
+    const row = make('tr');
+    cell(row, item.country ? names.of(item.country) : 'Не определено');
+    cell(row, number.format(item.visitors));
+    cell(row, visitors ? percent.format(item.visitors / visitors) : '—');
+    countries.append(row);
+  }
+  empty(countries, 3, 'За этот период данных пока нет.');
   const tbody = $('#sources');
   tbody.replaceChildren();
   for (const item of data.sources) {

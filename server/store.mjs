@@ -103,13 +103,13 @@ function analyticsContext(request, data, now) {
   const id = hasId ? existing : crypto.randomUUID();
   const cookie = hasId ? undefined :
     `${visitorCookie}=${id}; Max-Age=7776000; Path=/; HttpOnly; SameSite=Lax${new URL(request.url).protocol === 'https:' ? '; Secure' : ''}`;
-  return { id, cookie, attribution: trafficSource(data), day: now.slice(0, 10) };
+  return { id, cookie, attribution: trafficSource(data), day: now.slice(0, 10), country: process.env.VERCEL === "1" && /^[A-Z]{2}$/.test(request.headers.get("x-vercel-ip-country") || "") ? request.headers.get("x-vercel-ip-country") : null };
 }
 
 async function recordTraffic(db, tracker, now, added) {
   if (!tracker.id) return;
-  await db.query(`INSERT INTO veyrase.visitors (id, source, medium, campaign, created_at)
-    VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING`, [tracker.id, ...tracker.attribution, now]);
+  await db.query(`INSERT INTO veyrase.visitors AS existing (id, source, medium, campaign, created_at, country)
+    VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO UPDATE SET country = COALESCE(existing.country, excluded.country)`, [tracker.id, ...tracker.attribution, now, tracker.country]);
   await db.query(`INSERT INTO veyrase.visitor_days AS existing (visitor_id, day, added)
     VALUES ($1, $2, $3)
     ON CONFLICT (visitor_id, day) DO UPDATE SET added = GREATEST(existing.added, excluded.added)`,
@@ -237,7 +237,7 @@ async function statistics(db, url, now) {
   if (![7, 30, 90].includes(days)) throw new HttpError(400, 'Unsupported reporting period.');
   const since = new Date(new Date(now).setUTCHours(0, 0, 0, 0) - (days - 1) * 86400000).toISOString().slice(0, 10);
   const sinceTime = since + 'T00:00:00.000Z';
-  const [sources, metrics] = await Promise.all([
+  const [sources, metrics, daily, countries] = await Promise.all([
     db.query(`WITH audience AS (
         SELECT visitor_id, MAX(added) AS added FROM veyrase.visitor_days WHERE day >= $1 GROUP BY visitor_id
       ), purchasers AS (
@@ -249,13 +249,32 @@ async function statistics(db, url, now) {
       LEFT JOIN purchasers p ON a.visitor_id = p.visitor_id
       GROUP BY v.source, v.medium, v.campaign ORDER BY visitors DESC, v.source`, [since, sinceTime]),
     db.query(`SELECT COUNT(*)::integer AS orders, COUNT(paid_at)::integer AS paid_orders
-      FROM veyrase.orders WHERE created_at >= $1`, [sinceTime])
+      FROM veyrase.orders WHERE created_at >= $1`, [sinceTime]),
+    db.query(`WITH dates AS (
+        SELECT generate_series($1::date, $2::date, interval '1 day')::date AS day
+      ), traffic AS (
+        SELECT day, COUNT(*)::integer AS visitors, SUM(added)::integer AS cart
+        FROM veyrase.visitor_days WHERE day BETWEEN $1::date AND $2::date GROUP BY day
+      ), orders AS (
+        SELECT (created_at AT TIME ZONE 'UTC')::date AS day, COUNT(*)::integer AS orders
+        FROM veyrase.orders WHERE created_at >= $1::date GROUP BY 1
+      ), payments AS (
+        SELECT (paid_at AT TIME ZONE 'UTC')::date AS day, COUNT(*)::integer AS paid_orders
+        FROM veyrase.orders WHERE paid_at >= $1::date GROUP BY 1
+      ) SELECT to_char(d.day, 'YYYY-MM-DD') AS day, COALESCE(t.visitors, 0) AS visitors,
+        COALESCE(t.cart, 0) AS cart, COALESCE(o.orders, 0) AS orders, COALESCE(p.paid_orders, 0) AS paid_orders
+      FROM dates d LEFT JOIN traffic t USING(day) LEFT JOIN orders o USING(day)
+      LEFT JOIN payments p USING(day) ORDER BY d.day DESC`, [since, now.slice(0, 10)]),
+    db.query(`SELECT v.country, COUNT(*)::integer AS visitors FROM veyrase.visitors v
+      WHERE EXISTS (SELECT 1 FROM veyrase.visitor_days d WHERE d.visitor_id = v.id
+        AND d.day BETWEEN $1::date AND $2::date)
+      GROUP BY v.country ORDER BY visitors DESC, v.country NULLS LAST`, [since, now.slice(0, 10)])
   ]);
   const totals = sources.rows.reduce((sum, row) => {
     for (const key of ['visitors', 'cart', 'purchasers']) sum[key] += row[key];
     return sum;
   }, { visitors: 0, cart: 0, purchasers: 0 });
-  return json({ since, days, totals, sources: sources.rows, ...metrics.rows[0] });
+  return json({ since, days, totals, sources: sources.rows, daily: daily.rows, countries: countries.rows, ...metrics.rows[0] });
 }
 
 

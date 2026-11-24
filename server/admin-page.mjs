@@ -30,7 +30,19 @@ export const adminPage = `<!doctype html>
         <article><span>Заявки на заказ</span><strong data-metric="orders">—</strong><small data-metric="paidOrders"></small></article>
       </div>
       <p class="hint">Посетители считаются по браузерам за выбранный период. Покупка учитывается после подтверждения оплаты. Источники отражают первое посещение сайта. Периоды считаются по UTC.</p>
-      <h2>Источники трафика</h2>
+      <h2>По дням</h2>
+      <p class="hint">Даты по UTC. Посетители уникальны внутри дня, поэтому сумма дней может быть больше итога за период. Оплаты показаны в день подтверждения.</p>
+      <div class="scroll" tabindex="0" aria-label="Статистика по дням"><table>
+        <thead><tr><th>Дата (UTC)</th><th>Посетители</th><th>В корзину</th><th>Заказы</th><th>Оплачено</th></tr></thead>
+        <tbody id="daily-rows"></tbody>
+      </table></div>
+      <h2 class="report-title">География посетителей</h2>
+      <p class="hint">Первая определённая страна браузера по IP. VPN может менять страну. Старые посещения без GEO — «Не определено». IP-адреса не сохраняются.</p>
+      <div class="scroll" tabindex="0" aria-label="Страны посетителей"><table>
+        <thead><tr><th>Страна</th><th>Посетители</th><th>Доля</th></tr></thead>
+        <tbody id="country-rows"></tbody>
+      </table></div>
+      <h2 class="report-title">Источники трафика</h2>
       <div class="scroll" tabindex="0" aria-label="Таблица источников"><table>
         <thead><tr><th>Источник</th><th>Канал</th><th>Кампания</th><th>Посетители</th><th>В корзину</th><th>Купили</th></tr></thead>
         <tbody id="sources"></tbody>
