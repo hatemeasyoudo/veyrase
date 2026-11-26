@@ -1,6 +1,7 @@
+import { readPricing, validPricing } from './pricing.mjs';
 import { adminPage } from './admin-page.mjs';
 
-const product = { sku: 'BRC-CROSS-001', sizeId: '20', unitPrice: 4000, deliveryFee: 2000, currency: 'USD' };
+const product = { sku: 'BRC-CROSS-001', sizeId: '20', currency: 'USD' };
 const visitorCookie = 'veyrase_vid';
 const uuid = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 const orderReference = /^V-[0-9A-F]{12}$/;
@@ -135,7 +136,7 @@ async function newOrder(request, db, data, now) {
     addressLine2: optionalField(data.addressLine2, 120, 'apartment or suite'),
     region: optionalField(data.region, 100, 'state or province'),
     postalCode: data.noPostalCode === true ? null : field(data.postalCode, 24, 'postal code'),
-    deliveryFee: product.deliveryFee
+    deliveryFee: 0
   };
   if (!/^\+?[0-9 ().-]+$/.test(shipping.phone) || !/^\d{6,15}$/.test(shipping.phone.replace(/\D/g, ''))) {
     throw new HttpError(400, 'Enter a phone number with its country code.');
@@ -147,13 +148,26 @@ async function newOrder(request, db, data, now) {
       !Number.isInteger(item.qty) || item.qty < 1 || item.qty > 9) {
     throw new HttpError(400, 'Check your bag and try again.');
   }
-  const subtotal = item.qty * product.unitPrice;
-  if (data.quotedTotal !== subtotal + product.deliveryFee) {
-    throw new HttpError(409, 'Reload checkout to see the current total, including $20 USD delivery.');
-  }
   const tracker = analyticsContext(request, data, now);
   const id = 'V-' + crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase();
   const stored = await db.transaction(async client => {
+    const previous = await client.query('SELECT id, subtotal, currency, status, payment_reported_at, shipping, email FROM veyrase.orders WHERE request_id = $1', [key]);
+    if (previous.rows[0]) {
+      if (previous.rows[0].email !== email) throw new HttpError(409, 'Refresh the page before sending a new order.');
+      return previous.rows[0];
+    }
+    // Savepoint keeps checkout usable before the additive settings migration is installed.
+    await client.query('SAVEPOINT pricing_read');
+    const prices = await readPricing(client, true);
+    if (!prices.configured) await client.query('ROLLBACK TO SAVEPOINT pricing_read');
+    await client.query('RELEASE SAVEPOINT pricing_read');
+    const subtotal = item.qty * prices.unitPrice;
+    if (data.quotedTotal !== subtotal + prices.deliveryFee ||
+        (data.quotedUnitPrice !== undefined && data.quotedUnitPrice !== prices.unitPrice) ||
+        (data.quotedDeliveryFee !== undefined && data.quotedDeliveryFee !== prices.deliveryFee)) {
+      throw new HttpError(409, 'Prices have changed. Review the updated total and submit again.');
+    }
+    shipping.deliveryFee = prices.deliveryFee;
     await recordTraffic(client, tracker, now, true);
     await client.query(`INSERT INTO veyrase.orders
       (id, request_id, visitor_id, name, email, sku, size_id, qty, subtotal, currency, created_at, shipping)
@@ -363,6 +377,26 @@ async function handle(request, { database, adminPassword }) {
   const db = database();
   if (!db) throw new HttpError(503, 'The store database is unavailable. Please try again later.');
   const now = new Date().toISOString();
+  if (method === 'GET' && path === '/api/pricing') {
+    const { unitPrice, deliveryFee, currency } = await readPricing(db);
+    return json({ unitPrice, deliveryFee, currency });
+  }
+  if (isAdmin && path === '/api/admin/pricing') {
+    if (method === 'GET') return json(await readPricing(db));
+    if (method === 'PUT') {
+      sameOrigin(request, url);
+      const data = await readJson(request);
+      if (!validPricing(data)) throw new HttpError(400, 'Введите цену от 0.01 до 10000 USD и доставку от 0 до 10000 USD.');
+      try {
+        await db.query(`INSERT INTO veyrase.pricing (id, unit_price, delivery_fee) VALUES (1, $1, $2)
+          ON CONFLICT (id) DO UPDATE SET unit_price = excluded.unit_price, delivery_fee = excluded.delivery_fee, updated_at = now()`, [data.unitPrice, data.deliveryFee]);
+      } catch (error) {
+        if (error.code === '42P01') throw new HttpError(503, 'Сначала выполните supabase/pricing.sql в Supabase SQL Editor.');
+        throw error;
+      }
+      return json(await readPricing(db));
+    }
+  }
   if (isAdmin && method === 'GET' && path === '/api/admin/statistics') return statistics(db, url, now);
   const records = /^\/api\/admin\/(orders|returns)(?:\/([VR]-[0-9A-F]{12}))?$/.exec(path);
   if (records && isAdmin && method === 'GET' && !records[2]) return listRecords(db, records[1], url);

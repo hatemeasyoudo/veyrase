@@ -3,11 +3,33 @@
   "framework": null,
   "outputDirectory": "public",
   "rewrites": [
-    { "source": "/admin", "destination": "/api/store?__store_path=/admin" },
-    { "source": "/api/analytics", "destination": "/api/store?__store_path=/api/analytics" },
-    { "source": "/api/orders", "destination": "/api/store?__store_path=/api/orders" },
-    { "source": "/api/orders/payment", "destination": "/api/store?__store_path=/api/orders/payment" },
-    { "source": "/api/returns", "destination": "/api/store?__store_path=/api/returns" },
-    { "source": "/api/admin/:path*", "destination": "/api/store?__store_path=/api/admin/:path*" }
+    {
+      "source": "/admin",
+      "destination": "/api/store?__store_path=/admin"
+    },
+    {
+      "source": "/api/pricing",
+      "destination": "/api/store?__store_path=/api/pricing"
+    },
+    {
+      "source": "/api/analytics",
+      "destination": "/api/store?__store_path=/api/analytics"
+    },
+    {
+      "source": "/api/orders",
+      "destination": "/api/store?__store_path=/api/orders"
+    },
+    {
+      "source": "/api/orders/payment",
+      "destination": "/api/store?__store_path=/api/orders/payment"
+    },
+    {
+      "source": "/api/returns",
+      "destination": "/api/store?__store_path=/api/returns"
+    },
+    {
+      "source": "/api/admin/:path*",
+      "destination": "/api/store?__store_path=/api/admin/:path*"
+    }
   ]
 }

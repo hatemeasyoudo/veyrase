@@ -505,8 +505,8 @@ const SITE_CONFIG = {
   product: {
     sku: "BRC-CROSS-001",
     name: "Tennis bracelet / cross",           // working product title
-    price: 4000,                                // minor units → $40.00
-    deliveryFee: 2000,                          // USD per order
+    price: null,                                // loaded from /api/pricing
+    deliveryFee: null,                          // loaded from /api/pricing
     currency: "USD",
     sizes: [{ id: "20", label: "20 CM", note: "±2 CM" }],   // one size, adjustable ±2 cm at the bracelet fastening
     availability: null,                         // e.g. "In stock"
@@ -525,7 +525,7 @@ const SITE_CONFIG = {
     crossLabel: "≈ 30 × 17 mm",
     info: {
       sizeGuide: "One size: 20 cm. Length adjusts by ±2 cm at the bracelet fastening.",
-      delivery: "Worldwide. 7–10 days. $20 USD per order.",
+      delivery: "Worldwide. 7–10 days. Delivery calculated at checkout.",
       returns: "Complete and submit a return request. We’ll review it and let you know whether your return is approved. You are responsible for return shipping costs.",
       care: null
     }
@@ -589,7 +589,7 @@ function send(path, data) {
     body: JSON.stringify(data)
   }).then(async response => {
     const result = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(result.error || "Service unavailable. Please try again.");
+    if (!response.ok) { const error = new Error(result.error || "Service unavailable. Please try again."); error.status = response.status; throw error; }
     return result;
   });
 }
@@ -614,6 +614,11 @@ function submitForm(form, status, path, collect, done) {
     const fields = Object.fromEntries(new FormData(form));
     try {
       const submittedKey = requestKey ||= crypto.randomUUID();
+      if (path === '/api/orders') {
+        const oldPrice = P.price, oldDelivery = P.deliveryFee;
+        await refreshPricing();
+        if (oldPrice !== P.price || oldDelivery !== P.deliveryFee) throw new Error('Prices have changed. Review the updated total and submit again.');
+      }
       const payload = collect(fields);
       const result = await send(path, { ...payload, requestId: submittedKey });
       if (typeof result.reference !== "string") throw new Error("The request could not be confirmed. Please try again.");
@@ -621,6 +626,7 @@ function submitForm(form, status, path, collect, done) {
       form.reset();
       done(result, submittedKey);
     } catch (error) {
+      if (path === '/api/orders' && error.status === 409) await refreshPricing().catch(() => {});
       status.textContent = error.message || "Could not send. Please try again.";
     } finally {
       button.disabled = false;
@@ -712,7 +718,7 @@ function renderBag() {
   $("#bagTotal").textContent = sub ? money(amount + P.deliveryFee) : "—";
   $("#checkoutDelivery").textContent = inDollars(P.deliveryFee);
   $("#checkoutTotal").textContent = sub ? inDollars(amount + P.deliveryFee) : "—";
-  $("#coBtn").disabled = !bag.length;
+  $("#coBtn").disabled = !bag.length || P.price === null;
   $("#paymentResume").hidden = !receipt;
   store.set(bag);
 }
@@ -835,6 +841,8 @@ submitForm(orderForm, orderStatus, "/api/orders", fields => ({
   ...fields,
   noPostalCode: fields.noPostalCode === "on",
   quotedTotal: bagSubtotal() + P.deliveryFee,
+  quotedUnitPrice: P.price,
+  quotedDeliveryFee: P.deliveryFee,
   items: bag.map(({ sku, sizeId, qty }) => ({ sku, sizeId, qty }))
 }), (order, requestId) => {
   if (!Number.isSafeInteger(order.total)) throw new Error("Reload checkout to see the current total.");
@@ -902,6 +910,23 @@ $("#coBack").addEventListener("click", () => {
   const next = $("#coBtn").disabled ? (receipt ? $("#paymentResume") : $("#bagClose")) : $("#coBtn");
   next.focus();
 });
+async function refreshPricing() {
+  const response = await fetch('/api/pricing', { cache: 'no-store' });
+  if (!response.ok) throw new Error('Unable to load prices. Please try again.');
+  const data = await response.json();
+  if (!Number.isSafeInteger(data.unitPrice) || data.unitPrice < 1 || !Number.isSafeInteger(data.deliveryFee) || data.deliveryFee < 0 || data.currency !== 'USD') throw new Error('Unable to load prices.');
+  P.price = data.unitPrice; P.deliveryFee = data.deliveryFee;
+  $('#price').textContent = money(P.price);
+  document.querySelectorAll('details').forEach(el => {
+    if (el.querySelector('summary')?.textContent.trim() === 'Delivery') {
+      const content = el.querySelector('.body');
+      if (content) content.textContent = 'Worldwide. 7–10 days. ' + (P.deliveryFee ? inDollars(P.deliveryFee) + ' per order.' : 'Free delivery.');
+    }
+  });
+  renderBag();
+}
+refreshPricing().catch(() => { $('#price').textContent = 'Price unavailable — refresh to retry'; });
+
 renderBag();
 
 /* ── reveal ────────────────────────────────────────────────────── */

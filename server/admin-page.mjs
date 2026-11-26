@@ -16,6 +16,7 @@ export const adminPage = `<!doctype html>
       <button type="button" data-tab="statistics" aria-current="page">Статистика</button>
       <button type="button" data-tab="orders">Заказы</button>
       <button type="button" data-tab="returns">Возвраты</button>
+      <button type="button" data-tab="pricing">Цены</button>
     </nav>
     <p id="notice" role="status" aria-live="polite"></p>
     <section id="statistics">
@@ -47,6 +48,17 @@ export const adminPage = `<!doctype html>
         <thead><tr><th>Источник</th><th>Канал</th><th>Кампания</th><th>Посетители</th><th>В корзину</th><th>Купили</th></tr></thead>
         <tbody id="sources"></tbody>
       </table></div>
+    </section>
+    <section id="pricing" hidden>
+      <h2>Цена браслета и доставка</h2>
+      <p class="hint">Цены в USD. Доставка взимается один раз за заказ. 0 — бесплатная доставка. Новые цены применяются к новым заказам; созданные заказы не меняются.</p>
+      <form id="pricing-form" class="pricing-form">
+        <label>Браслет, USD<input id="unit-price" type="number" min="0.01" max="10000" step="0.01" required disabled></label>
+        <label>Доставка, USD<input id="delivery-fee" type="number" min="0" max="10000" step="0.01" required disabled></label>
+        <p id="pricing-total"></p>
+        <button id="save-pricing" type="submit" disabled>Сохранить цены</button>
+        <p id="pricing-status" role="status" aria-live="polite"></p>
+      </form>
     </section>
     <section id="orders" hidden>
       <h2>Заказы</h2>

@@ -22,7 +22,7 @@ async function api(path, options) {
   if (result.error === 'This Revolut transaction is already linked to another order.') {
     throw new Error('Этот перевод Revolut уже привязан к другому заказу.');
   }
-  if (!response.ok) throw new Error(response.status === 401 ? 'Войдите снова, обновив страницу.' : 'Не удалось выполнить действие. Обновите страницу и попробуйте ещё раз.');
+  if (!response.ok) throw new Error(response.status === 401 ? 'Войдите снова, обновив страницу.' : (path === 'pricing' && result.error ? result.error : 'Не удалось выполнить действие. Обновите страницу и попробуйте ещё раз.'));
   return result;
 }
 
@@ -197,6 +197,9 @@ async function load() {
     if (view === 'statistics') {
       const data = await api('statistics?days=' + $('#period').value);
       if (id === requestSequence) paintStatistics(data);
+    } else if (view === 'pricing') {
+      const data = await api('pricing');
+      if (id === requestSequence) paintPricing(data);
     } else {
       const data = await api(view + '?offset=' + offset);
       if (id === requestSequence) paintRecords(view, data);
@@ -228,3 +231,34 @@ for (const button of document.querySelectorAll('[data-page]')) {
 }
 $('#period').addEventListener('change', load);
 load();
+
+function toCents(value) {
+  if (!/^\d+(?:[.,]\d{1,2})?$/.test(value)) return NaN;
+  const [whole, fraction = ''] = value.replace(',', '.').split('.');
+  return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+}
+function pricingTotal() {
+  const total = toCents($('#unit-price').value) + toCents($('#delivery-fee').value);
+  $('#pricing-total').textContent = Number.isSafeInteger(total) ? 'Итого за 1 браслет с доставкой: ' + (total / 100).toFixed(2) + ' USD' : '';
+}
+function paintPricing(data) {
+  $('#unit-price').value = (data.unitPrice / 100).toFixed(2);
+  $('#delivery-fee').value = (data.deliveryFee / 100).toFixed(2);
+  for (const id of ['unit-price', 'delivery-fee', 'save-pricing']) $('#' + id).disabled = !data.configured;
+  $('#pricing-status').textContent = data.configured ? '' : 'Для включения настроек выполните supabase/pricing.sql в Supabase. Сейчас действуют прежние цены.';
+  pricingTotal();
+}
+$('#pricing-form').addEventListener('input', pricingTotal);
+$('#pricing-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = $('#save-pricing');
+  if (button.disabled) return;
+  button.disabled = true;
+  $('#pricing-status').textContent = 'Сохранение…';
+  try {
+    const data = await api('pricing', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unitPrice: toCents($('#unit-price').value), deliveryFee: toCents($('#delivery-fee').value) }) });
+    paintPricing(data);
+    $('#pricing-status').textContent = 'Цены сохранены и применяются к новым заказам.';
+  } catch (error) { $('#pricing-status').textContent = error.message; }
+  finally { button.disabled = false; }
+});
