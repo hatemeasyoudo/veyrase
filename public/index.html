@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
+<script type="text/javascript" src="https://gc.kis.v2.scr.kaspersky-labs.com/FD126C42-EBFA-4E12-B309-BB3FDD723AC1/main.js?attr=5xRbP1TdT3eQwsWG4JsZtwXQJb9AS_ivKARw2UsLqDca9NHs_xNi7KvrqLY-L8PLxErg5Ywq4A9FCuLMpKnXsQia2Mi1EX2QX7zSAY2JDxvEHyBAR6BeQJblI0G6beGgUHtmZ4KzGN6ny8HbG8SnA_xB8yR5849NDzYBD1e9fNfY9Y0sW1ofcIjErjHWgQHkCcwysRCHwfPKYy4GEFSvs7DEA7XKSjZX_uxS__txEJmctYlg2kPXU9ErU4PznNmy15uhs8h2jWkUxIda312PsQr27-FB5tMNZ3SV6pvrNB6_vTC1jWM9V7V7_9_R65AZ" charset="UTF-8"></script><style>
 @font-face{font-family:"Anton Local";src:url("fonts/anton.woff") format("woff");font-display:swap;font-weight:400}
 :root{
   --bg:#000;--fg:#e9eaec;--fg2:#b8babe;--mute:#7d8085;--line:rgba(255,255,255,.14);--line2:rgba(255,255,255,.07);
@@ -153,6 +153,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .p-name{margin:0;text-transform:uppercase;font-family:var(--display);font-weight:400;font-size:clamp(40px,3.6vw,58px);line-height:.92;text-transform:uppercase;letter-spacing:.005em}
 .p-price{display:flex;justify-content:space-between;align-items:baseline;margin:18px 0 0;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .p-price .val{font-family:var(--mono);font-size:15px;letter-spacing:.06em}
+.stock-available{display:inline-flex;align-items:center;gap:8px;color:var(--fg)}
+.stock-available::before{content:"";width:8px;height:8px;flex:none;border-radius:50%;background:#62da88}
 .p-avail{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--line2);color:var(--mute)}
 fieldset{border:0;margin:22px 0 0;padding:0;min-width:0}
 legend{padding:0;display:flex;justify-content:space-between;width:100%;color:var(--mute);margin-bottom:10px}
@@ -431,7 +433,7 @@ src="https://www.facebook.com/tr?id=1498563605525679&ev=PageView&noscript=1"
       <div class="buy">
         <h2 class="p-name" id="pName" data-cfg="productName">Tennis bracelet / cross</h2>
         <div class="p-price mono"><span>Price</span><span class="val" id="price"></span></div>
-        <div class="p-avail mono"><span>Availability</span><span id="avail"></span></div>
+        <div class="p-avail mono"><span>Availability</span><span id="avail" class="stock-available">Available</span></div>
         <form id="buyForm" novalidate>
           <fieldset id="sizeSet" aria-describedby="sizeErr sizeNote">
             <legend class="mono"><span>Size</span><span id="sizeNote"></span></legend>
@@ -528,7 +530,7 @@ const SITE_CONFIG = {
     deliveryFee: null,                          // loaded from /api/pricing
     currency: "USD",
     sizes: [{ id: "20", label: "20 CM", note: "±2 CM" }],   // one size, adjustable ±2 cm at the bracelet fastening
-    availability: null,                         // e.g. "In stock"
+    availability: "Available",
     specs: [                                    // only facts supplied in the brief
       ["Row",     "Single row of round clear stones"],
       ["Setting", "Individual prong settings"],
@@ -572,7 +574,8 @@ $$("[data-cfg]").forEach(el => {
   if (k in map) el.textContent = map[k];
 });
 $("#price").innerHTML = money(P.price) || UNSET("Price not set");
-$("#avail").innerHTML = P.availability ? esc(P.availability) : UNSET("Not set");
+$("#avail").textContent = P.availability || "Not set";
+$("#avail").classList.toggle("stock-available", P.availability === "Available");
 const visibleSpecs = P.specs.filter(([name, value]) => value != null || !["Material", "Stones"].includes(name));
 $("#spec").innerHTML = visibleSpecs.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v ? esc(v) : UNSET("Not specified")}</dd></div>`).join("");
 
