@@ -240,6 +240,11 @@ body.bag-open .bag{transform:none;visibility:visible}
 .payment-summary{padding:10px 0;border-block:1px solid var(--line)}
 .payment-summary p{display:flex;justify-content:space-between;gap:10px}
 .payment-summary strong{color:var(--fg)}
+.payment-choices,#cryptoInstructions{display:grid;gap:10px;margin:14px 0}
+#cryptoInstructions[hidden]{display:none}
+#cryptoForm select{padding:10px;background:#101010;border:1px solid #56565a;color:var(--fg);width:100%;font:inherit}
+#cryptoForm input[readonly]{font-family:var(--mono);font-size:14px}
+#cardDetails summary{cursor:pointer;font-size:13px;color:var(--fg2);padding:8px 0}
 
 /* ── responsive ────────────────────── */
 @media (max-width:1180px){
@@ -486,25 +491,53 @@ src="https://www.facebook.com/tr?id=1498563605525679&ev=PageView&noscript=1"
           <p><span>Delivery</span><strong id="checkoutDelivery"></strong></p>
           <p><span>Total to pay</span><strong id="checkoutTotal"></strong></p>
         </div>
-        <p>Revolut will open in this tab. Use your browser’s Back button to return after paying.</p>
+        <p>Choose your payment method in the next step.</p>
         <button type="submit" class="btn-metal">Continue to payment</button>
       </form>
       <p class="form-status" id="orderStatus" role="status"></p>
-      <section id="paymentDetails" aria-label="Revolut payment" hidden>
+      <section id="paymentDetails" aria-label="Payment methods" hidden>
         <div class="payment-summary">
           <p><span>Order number</span><strong id="paymentReference"></strong></p>
           <p id="paymentDeliveryRow" hidden><span>Delivery</span><strong id="paymentDelivery"></strong></p>
           <p><span>Total to pay</span><strong id="paymentTotal"></strong></p>
         </div>
         <div id="paymentPending" hidden>
-          <p>Enter the total in USD. If Revolut offers a payment note, enter your order number. Then return here to tell us you paid.</p>
-          <a class="btn-metal" id="payLink" href="https://revolut.me/kosex" target="_blank" rel="noopener noreferrer">Pay with Revolut</a>
-          <form class="store-form" id="paymentForm">
-            <label>Name shown on the transfer <input name="payerName" maxlength="120" required></label>
-            <label>Revolut transfer ID (if available) <input name="payerReference" maxlength="160"></label>
-            <button type="submit" class="btn-line">I sent the payment</button>
+          <p>Choose a payment method. On Revolut, enter the USD total above and include your order number if a note is available.</p>
+          <div class="payment-choices">
+            <a class="btn-metal" id="payLink" href="https://revolut.me/kosex" target="_blank" rel="noopener noreferrer">Card / Apple Pay / Revolut</a>
+            <button type="button" class="btn-line" id="payCrypto" aria-controls="cryptoPanel" aria-expanded="false">Pay with Crypto</button>
+          </div>
+          <details id="cardDetails">
+            <summary>Already paid via Revolut? Confirm here</summary>
+            <form class="store-form" id="paymentForm">
+              <label>Name shown on the transfer <input name="payerName" maxlength="120" required></label>
+              <label>Revolut transfer ID (if available) <input name="payerReference" maxlength="160"></label>
+              <button type="submit" class="btn-line">I sent the payment</button>
+            </form>
+          </details>
+        </div>
+        <div id="cryptoPanel" hidden>
+          <form class="store-form" id="cryptoForm">
+            <label>USDT network
+              <select id="cryptoNetwork" required>
+                <option value="">Select the network used by your wallet</option>
+                <option value="ethereum">Ethereum mainnet (ERC-20)</option>
+                <option value="solana">Solana mainnet (SPL)</option>
+              </select>
+            </label>
+            <div id="cryptoInstructions" hidden>
+              <p>Send only USDT on <strong id="networkLabel"></strong>. Send the exact amount below, with network fees paid separately. We price 1 USDT at 1 USD and apply a discount under one cent to identify your order.</p>
+              <label>Recipient receives (USDT)<input id="cryptoAmount" readonly></label>
+              <button type="button" class="btn-line" data-copy="cryptoAmount">Copy amount</button>
+              <label>Recipient wallet<input id="cryptoWallet" readonly spellcheck="false"></label>
+              <button type="button" class="btn-line" data-copy="cryptoWallet">Copy address</button>
+              <p>If your wallet rounds the amount, use the card option before sending.</p>
+              <label>Transaction ID (hash or signature)<input id="cryptoTx" maxlength="100" required autocapitalize="none" autocomplete="off" spellcheck="false"></label>
+              <button type="submit" class="btn-metal">Submit transfer for review</button>
+            </div>
           </form>
         </div>
+        <button type="button" class="btn-line" id="correctCrypto" hidden>Correct transfer details</button>
         <p class="form-status" id="paymentStatus" role="status"></p>
       </section>
       <button type="button" class="btn-line" id="coBack" style="margin-top:18px">Back to bag</button>
@@ -775,7 +808,7 @@ document.addEventListener("keydown", e => {
   if (!document.body.classList.contains("bag-open")) return;
   if (e.key === "Escape") { e.preventDefault(); closeBag(); return; }
   if (e.key === "Tab") {
-    const f = $$('button:not([disabled]),[href],input:not([disabled]),[tabindex]:not([tabindex="-1"])', bagEl).filter(el => el.offsetParent !== null);
+    const f = $$('button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),summary,[tabindex]:not([tabindex="-1"])', bagEl).filter(el => el.offsetParent !== null);
     if (!f.length) return;
     const first = f[0], last = f[f.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -818,6 +851,8 @@ function saveReceipt(order) {
 
 function showPaymentState(state) {
   $("#paymentPending").hidden = state !== "pending";
+  $("#correctCrypto").hidden = !(state === "reported" && receipt.cryptoNetwork);
+  if (state !== "pending") setCryptoOpen(false);
   paymentMessage.textContent = ({
     checking: "Checking payment status…",
     reported: "Payment details received. We’ll check the transfer before preparing your order.",
@@ -828,7 +863,11 @@ function showPaymentState(state) {
 }
 
 function showPayment(state) {
-  checkoutTitle.textContent = "Revolut payment";
+  checkoutTitle.textContent = "Payment";
+  setCryptoOpen(false);
+  $("#cryptoForm").reset();
+  $("#cryptoInstructions").hidden = true;
+  $("#cardDetails").open = false;
   orderForm.hidden = true;
   orderInstructions.hidden = true;
   orderStatus.textContent = "";
@@ -868,17 +907,12 @@ submitForm(orderForm, orderStatus, "/api/orders", fields => ({
   items: bag.map(({ sku, sizeId, qty }) => ({ sku, sizeId, qty }))
 }), (order, requestId) => {
   if (!Number.isSafeInteger(order.total)) throw new Error("Reload checkout to see the current total.");
-  const submittedTotal = $("#checkoutTotal").textContent;
   saveReceipt({ ...order, requestId });
   bag.length = 0;
   orderForm.elements.postalCode.disabled = false;
   renderBag();
   showPayment(order.paymentStatus);
-  if (order.paymentStatus === "pending" && $("#paymentTotal").textContent === submittedTotal &&
-      document.body.classList.contains("bag-open")) {
-    history.replaceState({ ...history.state, revolutOrder: order.reference }, "");
-    location.assign($("#payLink").href);
-  }
+
 });
 
 async function updatePayment(order, fields) {
@@ -888,7 +922,7 @@ async function updatePayment(order, fields) {
     ...fields
   });
   if (result.reference !== receipt?.reference) return;
-  saveReceipt({ ...receipt, paymentStatus: result.paymentStatus });
+  saveReceipt({ ...receipt, ...result });
   showPaymentState(result.paymentStatus);
 }
 
@@ -909,6 +943,92 @@ addEventListener("pageshow", () => {
   history.replaceState(state, "");
   if (!document.body.classList.contains("bag-open")) openBag();
   checkLatestPayment();
+});
+
+function setCryptoOpen(open) {
+  $("#cryptoPanel").hidden = !open;
+  $("#payCrypto").setAttribute("aria-expanded", String(open));
+  if (open) $("#cardDetails").open = false;
+}
+
+function renderNetwork() {
+  const network = $("#cryptoNetwork").value;
+  const wallet = receipt.cryptoQuote?.wallets?.[network];
+  $("#cryptoInstructions").hidden = !wallet;
+  $("#cryptoTx").disabled = !wallet;
+  $("#cryptoWallet").value = wallet || "";
+  $("#cryptoAmount").value = wallet ? receipt.cryptoQuote.amount : "";
+  $("#networkLabel").textContent = network === "ethereum" ? "Ethereum mainnet (ERC-20)" : "Solana mainnet (SPL)";
+}
+$("#cryptoNetwork").addEventListener("change", () => {
+  $("#cryptoTx").value = "";
+  renderNetwork();
+});
+$("#payLink").addEventListener("click", () => {
+  setCryptoOpen(false);
+  $("#cardDetails").open = true;
+});
+$("#cardDetails").addEventListener("toggle", () => {
+  if ($("#cardDetails").open) setCryptoOpen(false);
+});
+
+$("#payCrypto").addEventListener("click", async event => {
+  const button = event.currentTarget;
+  const order = receipt;
+  button.disabled = true;
+  paymentMessage.textContent = "Preparing your USDT payment…";
+  try {
+    await updatePayment(order, { action: "prepareCrypto" });
+    if (receipt.reference !== order.reference || receipt.paymentStatus !== "pending") return;
+    if (!receipt.cryptoQuote) throw new Error("Crypto is currently unavailable. Please use the card option.");
+    setCryptoOpen(true);
+    renderNetwork();
+    $("#cryptoNetwork").focus();
+  } catch (error) {
+    paymentMessage.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+for (const button of $$("[data-copy]")) {
+  button.addEventListener("click", async () => {
+    const input = document.getElementById(button.dataset.copy);
+    try {
+      await navigator.clipboard.writeText(input.value);
+      paymentMessage.textContent = button.dataset.copy === "cryptoAmount" ? "Amount copied." : "Wallet address copied.";
+    } catch {
+      input.focus();
+      input.select();
+      paymentMessage.textContent = "Selected. Use your device’s Copy command.";
+    }
+  });
+}
+
+$("#correctCrypto").addEventListener("click", () => {
+  $("#cryptoNetwork").value = receipt.cryptoNetwork;
+  renderNetwork();
+  $("#cryptoTx").value = receipt.cryptoTx;
+  setCryptoOpen(true);
+  $("#cryptoTx").focus();
+});
+$("#cryptoForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button[type="submit"]');
+  if (button.disabled) return;
+  button.disabled = true;
+  paymentMessage.textContent = "Submitting transfer…";
+  try {
+    await updatePayment(receipt, {
+      action: "reportCrypto", network: $("#cryptoNetwork").value,
+      transactionId: $("#cryptoTx").value.trim()
+    });
+    checkoutTitle.focus();
+  } catch (error) {
+    paymentMessage.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 
 paymentForm.addEventListener("submit", async event => {

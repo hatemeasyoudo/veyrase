@@ -19,9 +19,11 @@ let requestSequence = 0;
 async function api(path, options) {
   const response = await fetch('/api/admin/' + path, { cache: 'no-store', ...options });
   const result = await response.json().catch(() => ({}));
-  if (result.error === 'This Revolut transaction is already linked to another order.') {
-    throw new Error('Этот перевод Revolut уже привязан к другому заказу.');
+  if (result.error === 'This transaction is already linked to another order.') {
+    throw new Error('Этот перевод уже привязан к другому заказу.');
   }
+  if (result.error === 'The reported transaction has changed.') throw new Error('ID отличается от текущей заявки. Обновите список и сверьте перевод.');
+  if (result.error === 'Wait for the buyer to report their payment method.') throw new Error('Покупатель открыл криптосчёт. Дождитесь сообщения об оплате.');
   if (!response.ok) throw new Error(response.status === 401 ? 'Войдите снова, обновив страницу.' : (path === 'pricing' && result.error ? result.error : 'Не удалось выполнить действие. Обновите страницу и попробуйте ещё раз.'));
   return result;
 }
@@ -113,11 +115,29 @@ function shippingCell(row, shipping) {
 function statusControl(row, record, kind) {
   const reported = record.status === 'pending' && record.payment_reported_at;
   const slot = cell(row, reported ? 'Оплата на проверке' : labels[record.status], null, 'payment');
+  const quote = record.shipping?.cryptoQuote;
+  const network = record.shipping?.cryptoNetwork;
+  if (quote && (!record.payment_reported_at || network)) {
+    slot.append(make('small', 'Сумма криптосчёта: ' + quote.amount + ' USDT'));
+    slot.append(make('small', 'Счёт выдан (UTC): ' + new Date(quote.issuedAt).toISOString().replace('T', ' ').slice(0, 19)));
+  }
+  if (network) {
+    const ethereum = network === 'ethereum';
+    slot.append(make('small', 'Сеть: ' + (ethereum ? 'Ethereum (ERC-20)' : 'Solana (SPL)')));
+    slot.append(make('small', 'Кошелёк получателя: ' + quote.wallets[network]));
+    const token = ethereum ? '0xdAC17F958D2ee523a2206206994597C13D831ec7' : 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB';
+    slot.append(make('small', (ethereum ? 'Контракт USDT: ' : 'Mint USDT: ') + token));
+    const explorer = make('a', ethereum ? 'Проверить в Etherscan ↗' : 'Проверить в Solscan ↗');
+    explorer.href = (ethereum ? 'https://etherscan.io/tx/' : 'https://solscan.io/tx/') + encodeURIComponent(record.payment_payer_reference);
+    explorer.target = '_blank';
+    explorer.rel = 'noopener noreferrer';
+    slot.append(explorer);
+  }
   if (record.payment_payer) slot.append(make('small', 'Плательщик: ' + record.payment_payer));
   if (record.payment_payer_reference) slot.append(make('small', 'Номер от покупателя: ' + record.payment_payer_reference));
   if (record.payment_reported_at) slot.append(make('small', 'Сообщил об оплате: ' + date.format(new Date(record.payment_reported_at))));
   if (record.paid_at) slot.append(make('small', 'Оплата подтверждена: ' + date.format(new Date(record.paid_at))));
-  if (record.payment_transaction_id) slot.append(make('small', 'Revolut: ' + record.payment_transaction_id));
+  if (record.payment_transaction_id) slot.append(make('small', 'Подтверждённый ID: ' + record.payment_transaction_id));
   const next = transitions[kind][record.status];
   if (!next) return;
   const select = make('select');
@@ -134,7 +154,11 @@ function statusControl(row, record, kind) {
     if (!status) return;
     let transactionId;
     if (status === 'paid') {
-      if (record.shipping) {
+      if (network) {
+        const verified = confirm(`Подтвердить заказ ${record.id}? Проверьте в обозревателе, что перевод завершён после выдачи счёта, токен и сеть совпадают и на указанный кошелёк поступило ровно ${quote.amount} USDT.`);
+        if (!verified) { select.value = ''; return; }
+        transactionId = record.payment_payer_reference;
+      } else if (record.shipping) {
         transactionId = prompt(`Сверьте поступление ${orderTotal(record)} по заказу ${record.id} в Revolut. Введите уникальный ID полученного перевода, чтобы подтвердить оплату.`)?.trim();
         if (!transactionId || transactionId.length > 160) {
           select.value = '';

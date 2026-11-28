@@ -196,23 +196,80 @@ function paymentStatus(order) {
   return order.payment_reported_at ? 'reported' : 'pending';
 }
 
+const cryptoWallets = {
+  ethereum: '0x824Ff13Aff963EA0e59bA9aCa2630d75CC1F095e',
+  solana: 'AHnBvBbs3pCDkZyfzVMLdheDyaCRs8ACDBvCATerdpvW'
+};
+
+async function prepareQuote(client, order, now) {
+  if (order.shipping.cryptoQuote) return order.shipping.cryptoQuote;
+  const cents = orderAmounts(order).total;
+  // Orders with the same USD total share 9,999 sub-cent amounts. Serialize allocation.
+  await client.query('SELECT pg_advisory_xact_lock(184416, $1::int)', [cents]);
+  const { rows } = await client.query(`SELECT shipping->'cryptoQuote'->>'micros' AS micros
+    FROM veyrase.orders WHERE status = 'pending' AND shipping ? 'cryptoQuote'
+      AND subtotal + COALESCE((shipping->>'deliveryFee')::int, 0) = $1`, [cents]);
+  const used = new Set(rows.map(row => Number(row.micros)));
+  const start = Math.floor(Math.random() * 9999);
+  for (let step = 0; step < 9999; step++) {
+    const micros = cents * 10000 - 1 - ((start + step) % 9999);
+    if (used.has(micros)) continue;
+    const quote = { micros, amount: (micros / 1000000).toFixed(6), issuedAt: now, wallets: cryptoWallets };
+    await client.query(`UPDATE veyrase.orders SET shipping = jsonb_set(shipping, '{cryptoQuote}', $1::jsonb)
+      WHERE id = $2`, [JSON.stringify(quote), order.id]);
+    return quote;
+  }
+  throw new HttpError(503, 'Crypto is currently unavailable for this total. Please use the card option.');
+}
+
+function normalizeCryptoTx(network, value) {
+  if (!Object.hasOwn(cryptoWallets, network)) throw new HttpError(400, 'Select the transfer network.');
+  const tx = field(value, 100, 'transaction ID');
+  if (network === 'ethereum' && /^0x[0-9a-f]{64}$/i.test(tx)) return tx.toLowerCase();
+  if (network === 'solana' && /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(tx)) {
+    const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    let n = 0n;
+    for (const char of tx) n = n * 58n + BigInt(alphabet.indexOf(char));
+    const bytes = tx.match(/^1*/)[0].length + (n ? Math.ceil(n.toString(16).length / 2) : 0);
+    if (bytes === 64) return tx;
+  }
+  throw new HttpError(400, 'Enter the transaction ID from the selected network.');
+}
+
 async function orderPayment(db, data, now) {
   const key = requestId(data.requestId);
   if (typeof data.reference !== 'string' || !orderReference.test(data.reference)) {
     throw new HttpError(400, 'Enter a valid order number.');
   }
   const order = await db.transaction(async client => {
-    const { rows: [stored] } = await client.query(`SELECT id, status, payment_reported_at
+    const { rows: [stored] } = await client.query(`SELECT id, status, subtotal, shipping, payment_reported_at, payment_payer_reference
       FROM veyrase.orders WHERE id = $1 AND request_id = $2 AND shipping IS NOT NULL FOR UPDATE`, [data.reference, key]);
     if (!stored) throw new HttpError(404, 'Order not found.');
-    if (data.payerName == null || paymentStatus(stored) !== 'pending') return stored;
-    const payerName = field(data.payerName, 120, 'payer name');
-    const payerReference = optionalField(data.payerReference, 160, 'payment reference');
-    await client.query(`UPDATE veyrase.orders SET payment_reported_at = $1, payment_payer = $2, payment_payer_reference = $3
-      WHERE id = $4`, [now, payerName, payerReference, stored.id]);
-    return { ...stored, payment_reported_at: now };
+    const state = paymentStatus(stored);
+    if (state === 'pending' && data.action === 'prepareCrypto') {
+      stored.shipping.cryptoQuote = await prepareQuote(client, stored, now);
+    } else if (data.action === 'reportCrypto' && (state === 'pending' || (state === 'reported' && stored.shipping.cryptoNetwork))) {
+      if (!stored.shipping.cryptoQuote) throw new HttpError(409, 'Open the crypto payment details first.');
+      const tx = normalizeCryptoTx(data.network, data.transactionId);
+      await client.query(`UPDATE veyrase.orders SET shipping = jsonb_set(shipping, '{cryptoNetwork}', to_jsonb($1::text)),
+        payment_reported_at = $2, payment_payer_reference = $3, payment_payer = NULL WHERE id = $4`,
+        [data.network, now, tx, stored.id]);
+      stored.shipping.cryptoNetwork = data.network;
+      stored.payment_payer_reference = tx;
+      stored.payment_reported_at = now;
+    } else if (state === 'pending' && data.payerName != null && !data.action) {
+      const payerName = field(data.payerName, 120, 'payer name');
+      const payerReference = optionalField(data.payerReference, 160, 'payment reference');
+      await client.query(`UPDATE veyrase.orders SET payment_reported_at = $1, payment_payer = $2, payment_payer_reference = $3
+        WHERE id = $4`, [now, payerName, payerReference, stored.id]);
+      stored.payment_reported_at = now;
+    }
+    return stored;
   });
-  return json({ reference: order.id, paymentStatus: paymentStatus(order) });
+  return json({ reference: order.id, paymentStatus: paymentStatus(order),
+    cryptoQuote: order.shipping.cryptoQuote || null, cryptoNetwork: order.shipping.cryptoNetwork || null,
+    cryptoTx: order.shipping.cryptoNetwork ? order.payment_payer_reference : null });
+
 }
 
 async function newReturn(db, data, now) {
@@ -323,23 +380,33 @@ async function changeStatus(db, kind, id, data, now) {
   const desired = data.status;
   const table = isOrder ? 'veyrase.orders' : 'veyrase.returns';
   const transitions = isOrder ? orderTransitions : returnTransitions;
-  const { rows: [current] } = await db.query(`SELECT status${isOrder ? ', shipping' : ''} FROM ${table} WHERE id = $1`, [id]);
+  const { rows: [current] } = await db.query(`SELECT status${isOrder ? ', shipping, payment_payer_reference, payment_reported_at' : ''} FROM ${table} WHERE id = $1`, [id]);
   if (!current) throw new HttpError(404, 'Record not found.');
   if (desired === current.status) return json({ ok: true });
   if (!transitions[current.status]?.includes(desired)) throw new HttpError(409, 'This status change is unavailable.');
-  const transactionId = isOrder && desired === 'paid' && current.shipping
-    ? field(data.transactionId, 160, 'Revolut transaction ID') : null;
+  let transactionId = isOrder && desired === 'paid' && current.shipping
+    ? field(data.transactionId, 160, 'transaction ID') : null;
+  if (transactionId && current.shipping.cryptoNetwork) {
+    transactionId = normalizeCryptoTx(current.shipping.cryptoNetwork, transactionId);
+    if (transactionId !== current.payment_payer_reference) throw new HttpError(409, 'The reported transaction has changed.');
+  } else if (transactionId && current.shipping.cryptoQuote && !current.payment_reported_at) {
+    throw new HttpError(409, 'Wait for the buyer to report their payment method.');
+  }
   let result;
   try {
     result = isOrder
       ? await db.query(`UPDATE veyrase.orders
           SET status = $1, paid_at = CASE WHEN $1 = 'paid' THEN $2::timestamptz ELSE paid_at END,
             payment_transaction_id = COALESCE($5, payment_transaction_id)
-          WHERE id = $3 AND status = $4`, [desired, now, id, current.status, transactionId])
+          WHERE id = $3 AND status = $4 AND ($1 <> 'paid' OR
+            (shipping IS NOT DISTINCT FROM $6::jsonb AND payment_payer_reference IS NOT DISTINCT FROM $7 AND
+             (payment_reported_at IS NULL) = $8::boolean))`,
+            [desired, now, id, current.status, transactionId, current.shipping ? JSON.stringify(current.shipping) : null,
+              current.payment_payer_reference, current.payment_reported_at == null])
       : await db.query('UPDATE veyrase.returns SET status = $1 WHERE id = $2 AND status = $3', [desired, id, current.status]);
   } catch (error) {
     if (error.code === '23505' && error.constraint === 'orders_payment_transaction') {
-      throw new HttpError(409, 'This Revolut transaction is already linked to another order.');
+      throw new HttpError(409, 'This transaction is already linked to another order.');
     }
     throw error;
   }
